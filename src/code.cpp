@@ -1,19 +1,73 @@
+/*
+ 
+____   ____      .__      _________              _____  _____.__          
+\   \ /   /____  |  |    /   _____/ ____  __ ___/ ____\/ ____\  |   ____  
+ \   Y   /\__  \ |  |    \_____  \ /  _ \|  |  \   __\\   __\|  | _/ __ \ 
+  \     /  / __ \|  |__  /        (  <_> )  |  /|  |   |  |  |  |_\  ___/ 
+   \___/  (____  /____/ /_______  /\____/|____/ |__|   |__|  |____/\___  >
+               \/               \/                                     \/ 
+                    Copyleft Thanat0s Since march 2021 
 
-// Connections 
-//Pin connected to ST_CP of 74HC595
-int latchPin = 8;  // PB0
-//Pin connected to SH_CP of 74HC595
-int clockPin = 12;   // PB4
-//Pin connected to DS of 74HC595
-int dataPin = 11;   // PB3
-int potPin = 2;     // PC2   // select the input pin for the potentiometer
-// Bit 9 - Led
-int ledh1 = 7;   //  PD7
-// Bit 10 - Led
-int ledh2 = 13;   //  PB5
-// Led for pffft engine.
-int pfft = 2;  // PD0
-int t_pfft = 6;  // PD4
+Code for Atmega328p microcontroller.
+https://github.com/Th4nat0s/T2103_ValSouffle
+
+
+                  ATMEL Atmega328p / ARDUINO Uno
+
+                              +-\/-+
+                        PC6  1|    |28  PC5  (A5)
+                (D  0)  PD0  2|    |27  PC4  (A4)        AREF
+                (D  1)  PD1  3|    |26  PC3  (A4)
+                (D 11)  PD2  4|    |25  PC2  (A2)
+  PWM T0  INT0  (D  2)  PD3  5|    |24  PC1  (A1)
+  PWM T0        (D  3)  PD4  6|    |23  PC0  (A0)
+                (D  4)  VCC  7|    |22  GND  (D  5)        PWM T1
+                (D  4)  GND  8|    |21  AREF 
+  PWM T1        (D  4)  PB6  9|    |20  AVCC 
+  PWM T1        (D  4)  PB7 10|    |19  PB5  (D13 )        PWM T1
+  PWM T1        (D  4)  PD5 11|    |18  PB4  (D12 )        PWM T1
+  PWM T1        (D  4)  PD6 12|    |17  PB3  (D11~)        PWM T1
+  PWM T1        (D  4)  PD7 13|    |16  PB2  (D10~)        PWM T1 
+  PWM T1        (D  4)  PB0 14|    |15  PB1  (D 9~)        PWM T1
+                              +----+
+
+*/
+
+
+
+
+/*
+____   ____            .__      ___.   .__                 
+\   \ /   /____ _______|__|____ \_ |__ |  |   ____   ______
+ \   Y   /\__  \\_  __ \  \__  \ | __ \|  | _/ __ \ /  ___/
+  \     /  / __ \|  | \/  |/ __ \| \_\ \  |_\  ___/ \___ \ 
+   \___/  (____  /__|  |__(____  /___  /____/\___  >____  >
+               \/              \/    \/          \/     \/ 
+*/
+
+// Connections to the  74HC595 ( 8 Bit led driver ) 
+const int latchPin = 8;  // PB0 connected to ST_CP
+const int clockPin = 12;   // PB4 connected to SH_CP
+const int dataPin = 11;   // PB3 connected to DS 
+
+// Connections to the leds 
+const int ledh1 = 7;   //  PD7 connected to Bit 9 - Led
+const int ledh2 = 13;   //  PB5 connected to Bit 10 - Led
+const int pfft = 2;  // PD0 connection to pffft led.
+
+// Input pins
+const int potPin = 2;     // PC2 selector, input pin for the potentiometer
+const int ButtonPin = 5;  // PD3, manual blower button
+
+// Output pins
+const int t_pfft = 6;  // PD4 connection to the blower driver.
+
+// Variables will change:
+int but_pushed;
+int buttonPushCounter = 0;   // counter for the number of button presses
+int buttonState = 0;         // current state of the button
+int lastButtonState = 0;     // previous state of the button
+
 
 int val = 0;       // variable to store the value coming from the sensor
 //float n = 0;
@@ -26,115 +80,166 @@ unsigned long action = millis();
 int pwr_slct;  // <- Int = 16 Bytes. 
 
 // Valeurs Min/Max Potar (For 10K varistor)
-int max_pot = 1024 ;// 877;
+int max_pot = 700; //1024 ;// 877;
 int min_pot = 26;
 int borne_max;
 int borne_min;
 
 
-// Seconds of Wait... in milliseconds.. 1sec = 1000msc
-// 0 means OFF !
-int pfftval[] =  {0, 60000, 30000, 25000, 20000, 10000, 5000, 2000, 1000, 500 ,250};
-// Time of Pfft in millseconds..
-int pffttime[] = {0,  3000,  3000,  3000,  3000,  1000,  1000, 500,  500,  500,  250};
-int pffstatus = 0; // 0 Sleeping... 1 pffting...
-int cpfftval;
-int cpffttime;
+// Configuration for the delays of the blower...
+// Timers are in milliseconds.. 1sec = 1000ms
+// 0 is special it means OFF !
+//      Position  0      1      2      3      4      5     6     7     8    9   10
+int pfftwait[] =  {0, 60000, 30000, 25000, 20000, 10000, 5000, 2000, 1000, 500 ,250};
+// Time to Pfft in millseconds..
+int pffttime[] = {0,  3000,  3000,  3000,  3000,  1000,  1000, 500,  500,  500, 250};
 
+
+int pffstatus = 0; // status of the blower 0 Sleeping... 1 pffting...
+int cpfftwait; // current wait selected time
+int cpffttime; // 
+
+
+/*
+.___       .__  __   
+|   | ____ |__|/  |_ 
+|   |/    \|  \   __\
+|   |   |  \  ||  |  
+|___|___|  /__||__|  
+         \/       
+*/
 
 void setup() {
   //Start Serial for debuging purposes
   Serial.begin(9600);
-  //set pins to output because they are addressed in the main loop
+  // Set various pins to in or output
   pinMode(latchPin, OUTPUT);
-  pinMode(ledh1, OUTPUT); // Led 9 and 10
-  pinMode(ledh2, OUTPUT);
-  pinMode(pfft, OUTPUT);   // Led output
-  pinMode(t_pfft, OUTPUT);  // Transistor output
+  pinMode(ledh1, OUTPUT); // Led 9 
+  pinMode(ledh2, OUTPUT);  // Led 10
+  pinMode(pfft, OUTPUT);   // Led showing blow
+  pinMode(t_pfft, OUTPUT);  // Transistor output for Blowing
+  pinMode(ButtonPin, INPUT);  // Input button
 
-
+  // Calcul des min / max potar.
   borne_max = (((max_pot - min_pot) / 11) * 10) + min_pot;
   borne_min = ((max_pot - min_pot) / 11) + min_pot;
-  
 }
 
 
+/*
+   _____         .__        
+  /     \ _____  |__| ____  
+ /  \ /  \\__  \ |  |/    \ 
+/    Y    \/ __ \|  |   |  \
+\____|__  (____  /__|___|  /
+        \/     \/        \/ 
+*/
+
 void loop() {
   val = analogRead(potPin);    // read the value from the rotary
-
+  readbutton();  // read the value from the button.
+  
   // Convertis la valeur du potar en 11 Positions possibles.
   pwr_slct = (val - min_pot ) / ((max_pot - min_pot) / 11) ;
 
   Serial.println();
   Serial.print ( "Pwr Select: ");
-  Serial.print (pwr_slct);
+  Serial.print (pwr_slct);  
 
+
+  // If Min or Max
   if (val < borne_min)  pwr_slct = 0 ;
   if (val >= borne_max)  pwr_slct = 10 ;
   
   // Convert power selected in LED bits.
   bit = 0; 
-  for (int i = pwr_slct-1; i >= 0; i--)  {
+  for (int i = pwr_slct-1; i >= 0; i--)  {  // Down count !
     bit = bit | (1 << i);
   }
 
-  // Select bit 9 & 10..
+  // Select value for bit 9 & 10..
   bith1 = (bit >> 8) & 0x1;
   bith2 = (bit >> 9) & 0x1;
-  
-  bit = bit & 0xff;  // Push bit back to 8 Bits. 
+  bit = bit & 0xff;  // Push bit back to 8 Bits before printing. 
 
-  // Mets à jour l'affichage.
+  // Mets à jour l'affichage des leds.
   digitalWrite(latchPin, 0);
   shiftOut(dataPin, clockPin, bit);
   digitalWrite(latchPin, 1);
   digitalWrite(ledh1, bith1);  // Led 9 and 10
   digitalWrite(ledh2, bith2);
 
-  // Determine time of sleeping and pffting.
+  // Determine time of sleeping and pffting based on power selected.
   cpffttime = pffttime[pwr_slct];
-  cpfftval = pfftval[pwr_slct];
+  cpfftwait = pfftwait[pwr_slct];
 
   Serial.print ( "val: ");
   Serial.print (cpffttime);
-  Serial.print(" ");
-  Serial.print(cpfftval);
+  Serial.print(" button:  ");
+  Serial.print(but_pushed);
 
 
-  // Wait and Loop.
-  // If power select is <> of 0...
-  unsigned long t = millis();  // Get time.
-  if (pffstatus == 1 and pwr_slct != 0 ) {
-    // Wait le temps qu'il faut.
-    if ( ( t - action ) > cpffttime ) {
-       action = t;  // Schedule next action
-       Serial.print("Wait");  
-       digitalWrite(pfft, 0);  // Stop le pfft.
-       digitalWrite(t_pfft, 0);  // Active le pfft.
-       pffstatus = 0;    // Set le status on pffft pas.
-      } 
-  } else if (pwr_slct != 0) {
-    // Souffle le temps qu'il faut.
-    if ( ( t - action ) > cpfftval ) {
-       action = t;
-       Serial.print("Souffle");  
-       digitalWrite(pfft, 1);  // Active le pfft.
-       digitalWrite(t_pfft, 1);  // Active le pfft.
-
-       pffstatus = 1;    // set le status on pfuiiiit 
-      } 
-  }
-
-  // Cas if blow and moved to 0.. stop blowing.
-  if (pffstatus == 1 and pwr_slct == 0 ) {
-      digitalWrite(pfft, 0);  // Active le pfft.
-      digitalWrite(t_pfft, 0);  // Active le pfft.
+  unsigned long t = millis();  // Get time. 
+  // If power is to 0 ( stop )... do nothing.
+  if (pwr_slct == 0 ) {
+      digitalWrite(pfft, 0);  // deActive le pfft.
+      digitalWrite(t_pfft, 0);  // deActive le pfft.
       pffstatus == 0;
+  } else {
+    // if not to 0... 
+    // Ovverride avec le bouton blow on off
+    if (but_pushed == 0) {
+      digitalWrite(pfft, 1);  // Active le pfft.
+      digitalWrite(t_pfft, 1);  // Active le pfft.
+      pffstatus = 1;
+      action = t + action ; // Invalidate timer.
+      } else {
+
+      // if not position 0 and button released then... look a time
+      // Wait and Loop.
+      // If power select is <> of 0...
+      if (pffstatus == 1 and pwr_slct != 0 ) {
+        // Wait le temps qu'il faut.
+        if ( ( t - action ) > cpffttime ) {
+          action = t;  // Schedule next action
+          Serial.print("Wait");  
+          digitalWrite(pfft, 0);  // Stop le pfft.
+          digitalWrite(t_pfft, 0);  // Stop le pfft.
+          pffstatus = 0;    // Set le status on pffft pas.
+        }
+      } else if (pwr_slct != 0) {
+        // Souffle le temps qu'il faut.
+        if ( ( t - action ) > cpfftwait  ) {
+          action = t;
+          Serial.print("Souffle");  
+          digitalWrite(pfft, 1);  // Active le pfft.
+          digitalWrite(t_pfft, 1);  // Active le pfft.
+          pffstatus = 1;    // set le status on pfuiiiit 
+        }
+      }
     }
-  
- // delay(50);
+  }
 }
 
+
+void readbutton() {
+  // read the pushbutton input pin update the status "but_pushed":
+  buttonState = digitalRead(ButtonPin);
+  // compare the buttonState to its previous state
+  if (buttonState != lastButtonState) {
+    // if the state has changed, increment the counter
+    if (buttonState == HIGH) {
+      // if the current state is HIGH then the button went from off to on:
+     buttonPushCounter++;
+     but_pushed = true;
+    } else {
+      // if the current state is LOW then the button went from on to off:
+      but_pushed = false;       
+    }
+  }
+  // save the current state as the last state, for next time through the loop
+  lastButtonState = buttonState;
+}
 
 void shiftOut(int myDataPin, int myClockPin, byte myDataOut) {
   // This shifts 8 bits out MSB first,
